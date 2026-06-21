@@ -12,8 +12,11 @@ import chisel3.util._
   * The skew and deskew registers are inside the array: a whole input vector goes in on one
   * cycle and the whole output vector comes out `latency` cycles later, one vector per cycle.
   *
-  * Loading: hold `shift` high for n cycles. Each column shifts down by one per cycle, so feed
-  * row n - 1 first and row 0 last.
+  * Weights are double buffered. Holding `shift` high for n cycles loads the shadow weights,
+  * one row per cycle with row n - 1 first, while the array keeps computing with the active
+  * ones. Raising `swap` with an input vector makes that vector the first one to use the new
+  * weights. The swap reaches the last PE 2n - 2 cycles after the vector goes in, so the next
+  * load may start that many cycles after the swap and not earlier.
   */
 class SystolicArray(val n: Int, dataWidth: Int = 8, accWidth: Int = 32) extends Module {
   val io = IO(new Bundle {
@@ -21,9 +24,12 @@ class SystolicArray(val n: Int, dataWidth: Int = 8, accWidth: Int = 32) extends 
     val weightIn = Input(Vec(n, SInt(dataWidth.W)))
     val inValid  = Input(Bool())
     val actIn    = Input(Vec(n, SInt(dataWidth.W)))
+    val swap     = Input(Bool())
     val outValid = Output(Bool())
     val out      = Output(Vec(n, SInt(accWidth.W)))
   })
+
+  val swapDistance = 2 * n - 2
 
   // Row r waits r cycles, so it meets the partial sum coming down from row r - 1.
   // Column c's sum leaves the bottom n + c cycles after its vector went in, and the deskew
@@ -37,6 +43,7 @@ class SystolicArray(val n: Int, dataWidth: Int = 8, accWidth: Int = 32) extends 
     pe.io.shift   := io.shift
     pe.io.shiftIn := (if (r == 0) io.weightIn(c) else pes(r - 1)(c).io.shiftOut)
     pe.io.actIn   := (if (c == 0) ShiftRegister(io.actIn(r), r) else pes(r)(c - 1).io.actOut)
+    pe.io.swapIn  := (if (c == 0) ShiftRegister(io.swap, r, false.B, true.B) else pes(r)(c - 1).io.swapOut)
     pe.io.psumIn  := (if (r == 0) 0.S else pes(r - 1)(c).io.psumOut)
   }
 
