@@ -38,7 +38,7 @@ class CoreDriver(dut: Core) {
   val n = dut.n
 
   def idle(): Unit = {
-    Seq(dut.io.wWrEn, dut.io.bWrEn, dut.io.aWrEn, dut.io.start).foreach(_.poke(false.B))
+    Seq(dut.io.wWrEn, dut.io.bWrEn, dut.io.aWrEn, dut.io.layerWrEn, dut.io.start).foreach(_.poke(false.B))
   }
 
   def writeWeights(base: Int, w: Seq[Seq[Int]]): Unit = {
@@ -74,8 +74,8 @@ class CoreDriver(dut: Core) {
     dut.io.aWrEn.poke(false.B)
   }
 
-  def pokeConfig(l: Layer): Unit = {
-    val c = dut.io.cfg
+  def writeLayer(idx: Int, l: Layer): Unit = {
+    val c = dut.io.layerWrData
     c.wBase.poke(l.wBase.U)
     c.bBase.poke(l.bBase.U)
     c.inBase.poke(l.inBase.U)
@@ -86,11 +86,17 @@ class CoreDriver(dut: Core) {
     c.shift.poke(l.shift.U)
     c.relu.poke(l.relu.B)
     c.toOut.poke(l.toOut.B)
+    dut.io.layerWrEn.poke(true.B)
+    dut.io.layerWrIdx.poke(idx.U)
+    dut.clock.step()
+    dut.io.layerWrEn.poke(false.B)
   }
 
-  /** Pulses start and waits for done. Returns the cycles from start to done. */
-  def run(l: Layer, timeout: Int = 100000): Int = {
-    pokeConfig(l)
+  /** Pulses start for the first numLayers layers and waits for done. Returns the cycles from
+    * start to done.
+    */
+  def run(numLayers: Int, timeout: Int = 200000): Int = {
+    dut.io.numLayers.poke(numLayers.U)
     dut.io.start.poke(true.B)
     var cycles = 0
     var done   = dut.io.done.peek().litToBoolean
@@ -129,10 +135,36 @@ class CoreDriver(dut: Core) {
     writeWeights(l.wBase, l.w)
     writeBias(l.bBase, l.b)
     writeActs(l.inBase, l.x)
-    val cycles = run(l)
+    writeLayer(0, l)
+    val cycles = run(1)
     val nTiles = l.w.head.length / n
     val got    = if (l.toOut) readOut(l.outBase, l.m, nTiles) else readActs(l.outBase, l.m, nTiles)
     (got, cycles)
+  }
+
+  /** Loads a network whose layers chain through the activation memory (layer i reads what
+    * layer i - 1 wrote, only layer 0's x is used), runs it, and returns the last layer's
+    * results.
+    */
+  def runNetwork(layers: Seq[Layer]): Seq[Seq[BigInt]] = {
+    idle()
+    for ((l, i) <- layers.zipWithIndex) {
+      writeWeights(l.wBase, l.w)
+      writeBias(l.bBase, l.b)
+      writeLayer(i, l)
+    }
+    writeActs(layers.head.inBase, layers.head.x)
+    run(layers.length)
+    val last   = layers.last
+    val nTiles = last.w.head.length / n
+    if (last.toOut) readOut(last.outBase, last.m, nTiles) else readActs(last.outBase, last.m, nTiles)
+  }
+
+  def expectedNetwork(layers: Seq[Layer]): Seq[Seq[BigInt]] = {
+    val lastInput = layers.init.foldLeft(layers.head.x) { (x, l) =>
+      Model.layerValues(x, l.w, l.b, l.shift, l.relu).map(_.map(v => PostProcessModel.clamp8(v).toInt))
+    }
+    expected(layers.last.copy(x = lastInput))
   }
 
   def expected(l: Layer): Seq[Seq[BigInt]] =

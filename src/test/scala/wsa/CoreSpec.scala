@@ -36,16 +36,28 @@ class CoreSpec extends AnyFlatSpec with ChiselSim {
     check(n, Layer(x, w, Seq(0, 1, 2, 3), shift = 0, relu = false, toOut = true))
   }
 
-  for (n <- Seq(1, 2, 4); m <- Seq(1, 2, 5, 17); (kt, nt) <- Seq((1, 1), (3, 1), (1, 3), (2, 3))) {
-    it should s"match the model with n = $n, M = $m, $kt x $nt tiles" in {
-      val rng = new Random(n * 1000 + m * 10 + kt * 3 + nt)
-      check(n, randomLayer(rng, n, m, kt, nt, toOut = rng.nextBoolean()))
+  for (n <- Seq(1, 2, 4)) {
+    it should s"match the model over a grid of shapes with n = $n" in {
+      simulate(new Core(n = n)) { dut =>
+        val d = new CoreDriver(dut)
+        for (m <- Seq(1, 2, 5, 17); (kt, nt) <- Seq((1, 1), (3, 1), (1, 3), (2, 3))) {
+          val rng = new Random(n * 1000 + m * 10 + kt * 3 + nt)
+          val l   = randomLayer(rng, n, m, kt, nt, toOut = rng.nextBoolean())
+          assert(d.runLayer(l)._1 == d.expected(l), s"M = $m, $kt x $nt tiles, toOut = ${l.toOut}")
+        }
+      }
     }
   }
 
   it should "write int8 results to the activation memory and int32 results to the output memory" in {
     val rng = new Random(5)
-    for (toOut <- Seq(false, true)) check(4, randomLayer(rng, 4, 6, 2, 2, toOut))
+    simulate(new Core(n = 4)) { dut =>
+      val d = new CoreDriver(dut)
+      for (toOut <- Seq(false, true)) {
+        val l = randomLayer(rng, 4, 6, 2, 2, toOut)
+        assert(d.runLayer(l)._1 == d.expected(l), s"toOut = $toOut")
+      }
+    }
   }
 
   it should "use the configured base addresses" in {
@@ -53,12 +65,13 @@ class CoreSpec extends AnyFlatSpec with ChiselSim {
     check(4, randomLayer(rng, 4, 7, 2, 2, toOut = false).copy(wBase = 100, bBase = 17, inBase = 300, outBase = 1000))
   }
 
-  it should "finish at once on an empty layer" in {
+  it should "finish within a cycle on an empty layer" in {
     simulate(new Core(n = 4)) { dut =>
       val d = new CoreDriver(dut)
       d.idle()
       val l = Layer(Seq.empty, Seq.fill(4, 4)(0), Seq.fill(4)(0), 0, relu = false, toOut = true)
-      assert(d.run(l) == 0)
+      d.writeLayer(0, l)
+      assert(d.run(1) <= 1)
       dut.io.busy.expect(false.B)
     }
   }

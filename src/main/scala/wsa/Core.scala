@@ -2,8 +2,8 @@ package wsa
 
 import chisel3._
 
-/** The accelerator without its host link: the memories and the engine, with ports to fill the
-  * memories, run a layer and read results back.
+/** The accelerator without its host link: the memories, the engine and the layer sequencer,
+  * with ports to fill the memories and the layer table, run the network and read results back.
   *
   * Host reads of the activation and output memories are synchronous and only valid while the
   * engine is not busy, since the engine uses the same read ports.
@@ -15,6 +15,7 @@ class Core(
   val biasDepth:   Int = 256,
   val outDepth:    Int = 1024,
   val maxRows:     Int = 256,
+  val maxLayers:   Int = 16,
   dataWidth:       Int = 8,
   accWidth:        Int = 32)
     extends Module {
@@ -34,17 +35,28 @@ class Core(
     val outRdAddr = Input(UInt(16.W))
     val outRdData = Output(Vec(n, SInt(accWidth.W)))
 
-    val start = Input(Bool())
-    val cfg   = Input(new LayerConfig)
-    val busy  = Output(Bool())
-    val done  = Output(Bool())
+    val layerWrEn   = Input(Bool())
+    val layerWrIdx  = Input(UInt(chisel3.util.log2Ceil(maxLayers).W))
+    val layerWrData = Input(new LayerConfig)
+
+    val start     = Input(Bool())
+    val numLayers = Input(UInt(8.W))
+    val busy      = Output(Bool())
+    val done      = Output(Bool())
   })
 
   val engine = Module(new MatMulEngine(n, maxRows, dataWidth, accWidth))
-  engine.io.start := io.start
-  engine.io.cfg   := io.cfg
-  io.busy         := engine.io.busy
-  io.done         := engine.io.done
+  val seq    = Module(new LayerSequencer(maxLayers))
+  seq.io.tableWrEn   := io.layerWrEn
+  seq.io.tableWrIdx  := io.layerWrIdx
+  seq.io.tableWrData := io.layerWrData
+  seq.io.start       := io.start
+  seq.io.numLayers   := io.numLayers
+  engine.io.start    := seq.io.engStart
+  engine.io.cfg      := seq.io.engCfg
+  seq.io.engDone     := engine.io.done
+  io.busy            := seq.io.busy
+  io.done            := seq.io.done
 
   val weightMem = SyncReadMem(weightDepth, Vec(n, SInt(dataWidth.W)))
   val biasMem   = SyncReadMem(biasDepth, Vec(n, SInt(accWidth.W)))
