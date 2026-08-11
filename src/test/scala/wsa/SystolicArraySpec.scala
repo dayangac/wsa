@@ -97,10 +97,10 @@ class SystolicArraySpec extends AnyFlatSpec with ChiselSim {
     check(n, Seq(Tile(Seq.fill(n, n)(-128), Seq(Some(Seq.fill(n)(-128)), Some(Seq.fill(n)(127))))))
   }
 
-  for (n <- Seq(1, 2, 4, 5); m <- Seq(1, 3, 12)) {
-    it should s"load the next tile while streaming, with no gap between tiles (n = $n, m = $m)" in {
-      val rng = new Random(n * 100 + m)
-      check(n, Seq.fill(4)(Tile(randMatrix(rng, n), Seq.fill(m)(Some(randVec(rng, n))))))
+  for (n <- Seq(1, 2, 4, 5)) {
+    it should s"load the next tile while streaming, with no gap between tiles (n = $n)" in {
+      val rng = new Random(n)
+      check(n, Seq(1, 3, 12).flatMap(m => Seq.fill(4)(Tile(randMatrix(rng, n), Seq.fill(m)(Some(randVec(rng, n)))))))
     }
   }
 
