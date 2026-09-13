@@ -5,7 +5,8 @@ import chisel3.util._
 
 /** Holds a table of layer configurations and runs layers 0 until numLayers on the engine, one
   * after another. Each layer reads the activations the previous one wrote, so the host picks
-  * the in/out bases to ping-pong between two regions of the activation memory.
+  * the in/out bases to ping-pong between two regions of the activation memory. Asking for more
+  * layers than the table holds runs the whole table.
   */
 class LayerSequencer(maxLayers: Int = 16) extends Module {
   val io = IO(new Bundle {
@@ -34,7 +35,7 @@ class LayerSequencer(maxLayers: Int = 16) extends Module {
   io.busy     := state =/= State.Idle
   io.done     := false.B
   io.engStart := state === State.Launch
-  io.engCfg   := table(idx)
+  io.engCfg   := table(idx(log2Ceil(maxLayers) - 1, 0))
 
   // The engine can finish in the cycle it starts (an empty layer), so done counts in Launch too.
   def next(): Unit =
@@ -50,7 +51,7 @@ class LayerSequencer(maxLayers: Int = 16) extends Module {
     is(State.Idle) {
       when(io.start) {
         idx := 0.U
-        num := io.numLayers
+        num := Mux(io.numLayers > maxLayers.U, maxLayers.U, io.numLayers)
         when(io.numLayers === 0.U) { io.done := true.B }.otherwise { state := State.Launch }
       }
     }

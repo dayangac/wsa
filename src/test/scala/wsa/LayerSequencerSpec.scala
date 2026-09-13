@@ -91,3 +91,47 @@ class LayerSequencerSpec extends AnyFlatSpec with ChiselSim {
     }
   }
 }
+
+class LayerSequencerUnitSpec extends AnyFlatSpec with ChiselSim {
+  behavior of "LayerSequencer"
+
+  /** Starts a run and answers every engine start with done a few cycles later. Returns how many
+    * layers were started before the sequencer reported done.
+    */
+  def countLayers(dut: LayerSequencer, numLayers: Int): Int = {
+    dut.io.tableWrEn.poke(false.B)
+    dut.io.engDone.poke(false.B)
+    dut.io.numLayers.poke(numLayers.U)
+    dut.io.start.poke(true.B)
+    dut.clock.step()
+    dut.io.start.poke(false.B)
+    var starts = 0
+    var cycles = 0
+    var done   = false
+    while (!done) {
+      if (dut.io.engStart.peek().litToBoolean) {
+        starts += 1
+        dut.clock.step(3)
+        dut.io.engDone.poke(true.B)
+      }
+      done = dut.io.done.peek().litToBoolean
+      dut.clock.step()
+      dut.io.engDone.poke(false.B)
+      cycles += 1
+      assert(cycles < 1000, "sequencer did not finish")
+    }
+    starts
+  }
+
+  it should "run as many layers as asked" in {
+    simulate(new LayerSequencer(16)) { dut =>
+      assert(countLayers(dut, 5) == 5)
+    }
+  }
+
+  it should "stop at the size of the table when asked for more layers" in {
+    simulate(new LayerSequencer(16)) { dut =>
+      assert(countLayers(dut, 20) == 16)
+    }
+  }
+}
