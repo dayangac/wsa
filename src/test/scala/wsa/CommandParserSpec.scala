@@ -1,7 +1,6 @@
 package wsa
 
 import chisel3._
-import chisel3.util._
 import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.flatspec.AnyFlatSpec
 import scala.util.Random
@@ -49,35 +48,6 @@ object Protocol {
   }
 }
 
-class ParserCore(n: Int) extends Module {
-  val io = IO(new Bundle {
-    val rx = Flipped(Valid(UInt(8.W)))
-    val tx = Decoupled(UInt(8.W))
-  })
-  val parser = Module(new CommandParser(n))
-  val core   = Module(new Core(n = n))
-  parser.io.rx <> io.rx
-  io.tx <> parser.io.tx
-  core.io.wWrEn       := parser.io.wWrEn
-  core.io.wWrAddr     := parser.io.wrAddr
-  core.io.wWrData     := parser.io.wWrData
-  core.io.bWrEn       := parser.io.bWrEn
-  core.io.bWrAddr     := parser.io.wrAddr
-  core.io.bWrData     := parser.io.bWrData
-  core.io.aWrEn       := parser.io.aWrEn
-  core.io.aWrAddr     := parser.io.wrAddr
-  core.io.aWrData     := parser.io.wWrData
-  core.io.aRdAddr     := 0.U
-  core.io.layerWrEn   := parser.io.layerWrEn
-  core.io.layerWrIdx  := parser.io.layerWrIdx
-  core.io.layerWrData := parser.io.layerWrData
-  core.io.start       := parser.io.start
-  core.io.numLayers   := parser.io.numLayers
-  parser.io.done      := core.io.done
-  core.io.outRdAddr   := parser.io.outRdAddr
-  parser.io.outRdData := core.io.outRdData
-}
-
 class CommandParserSpec extends AnyFlatSpec with ChiselSim {
   behavior of "CommandParser with a Core"
 
@@ -86,7 +56,7 @@ class CommandParserSpec extends AnyFlatSpec with ChiselSim {
   /** Sends bytes with `gap` idle cycles between them, then keeps running until `expect` reply
     * bytes have come back. tx.ready is low on cycles where `stall` says so.
     */
-  def exchange(dut: ParserCore, bytes: Seq[Int], expect: Int, gap: Int = 0, stall: Int => Boolean = _ => false): Seq[Int] = {
+  def exchange(dut: Accelerator, bytes: Seq[Int], expect: Int, gap: Int = 0, stall: Int => Boolean = _ => false): Seq[Int] = {
     val got   = Seq.newBuilder[Int]
     var count = 0
     var cycle = 0
@@ -131,7 +101,7 @@ class CommandParserSpec extends AnyFlatSpec with ChiselSim {
     Model.layerValues(hidden, layers(1).w, layers(1).b, layers(1).shift, relu = false).map(_.map(PostProcessModel.wrap32))
   }
 
-  def runProgram(dut: ParserCore, layers: Seq[Layer], gap: Int, stall: Int => Boolean = _ => false): Seq[Seq[BigInt]] = {
+  def runProgram(dut: Accelerator, layers: Seq[Layer], gap: Int, stall: Int => Boolean = _ => false): Seq[Seq[BigInt]] = {
     val m     = layers.head.m
     val reply = exchange(dut, Protocol.program(layers, n), 1 + m * 4 * n, gap, stall)
     assert(reply.head == Cmd.RunDone)
@@ -139,39 +109,39 @@ class CommandParserSpec extends AnyFlatSpec with ChiselSim {
   }
 
   it should "answer a ping" in {
-    simulate(new ParserCore(n)) { dut =>
+    simulate(new Accelerator(n)) { dut =>
       assert(exchange(dut, Protocol.ping, 1) == Seq(Cmd.Pong))
     }
   }
 
   it should "ignore unknown command bytes" in {
-    simulate(new ParserCore(n)) { dut =>
+    simulate(new Accelerator(n)) { dut =>
       assert(exchange(dut, Seq(0x00, 0xff, 0x42) ++ Protocol.ping, 1) == Seq(Cmd.Pong))
     }
   }
 
   it should "reply done at once to a run of zero layers" in {
-    simulate(new ParserCore(n)) { dut =>
+    simulate(new Accelerator(n)) { dut =>
       assert(exchange(dut, Protocol.run(0) ++ Protocol.ping, 2) == Seq(Cmd.RunDone, Cmd.Pong))
     }
   }
 
   it should "treat a write of zero entries as complete" in {
-    simulate(new ParserCore(n)) { dut =>
+    simulate(new Accelerator(n)) { dut =>
       assert(exchange(dut, Protocol.writeWeights(0, Seq.empty) ++ Protocol.ping, 1) == Seq(Cmd.Pong))
     }
   }
 
   it should "load, run and read back a two layer network" in {
     val layers = mlp(new Random(1), m = 6)
-    simulate(new ParserCore(n)) { dut =>
+    simulate(new Accelerator(n)) { dut =>
       assert(runProgram(dut, layers, gap = 3) == expected(layers))
     }
   }
 
   it should "keep up with a byte on every cycle and with tx stalls" in {
     val layers = mlp(new Random(2), m = 3)
-    simulate(new ParserCore(n)) { dut =>
+    simulate(new Accelerator(n)) { dut =>
       val rng = new Random(0)
       val stalls = Seq.fill(100000)(rng.nextInt(3) == 0)
       assert(runProgram(dut, layers, gap = 0, stall = stalls) == expected(layers))
@@ -182,7 +152,7 @@ class CommandParserSpec extends AnyFlatSpec with ChiselSim {
     // One layer whose output is known: identity weights, bias -2, no shift.
     val l = Layer(Seq(Seq(1, 2, 3, 4)), Seq.tabulate(n, n)((r, c) => if (r == c) 1 else 0), Seq.fill(n)(-2), 0,
       relu = false, toOut = true)
-    simulate(new ParserCore(n)) { dut =>
+    simulate(new Accelerator(n)) { dut =>
       val reply = exchange(dut, Protocol.program(Seq(l), n), 1 + 4 * n)
       assert(reply.tail == Seq(-1, 0, 1, 2).flatMap(Protocol.s32))
     }
