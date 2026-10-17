@@ -7,7 +7,8 @@ import chisel3.util._
 class Accelerator(n: Int = 4) extends Module {
   val io = IO(new Bundle {
     val rx = Flipped(Valid(UInt(8.W)))
-    val tx = Decoupled(UInt(8.W))
+    val tx   = Decoupled(UInt(8.W))
+    val busy = Output(Bool())
   })
   val parser = Module(new CommandParser(n))
   val core   = Module(new Core(n = n))
@@ -31,4 +32,5 @@ class Accelerator(n: Int = 4) extends Module {
   parser.io.done      := core.io.done
   core.io.outRdAddr   := parser.io.outRdAddr
   parser.io.outRdData := core.io.outRdData
+  io.busy             := core.io.busy
 }
