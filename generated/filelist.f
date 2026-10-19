@@ -1,0 +1,17 @@
+UartRx.sv
+UartTx.sv
+ram_32x8.sv
+Queue32_UInt8.sv
+CommandParser.sv
+PE.sv
+SystolicArray.sv
+PostProcess.sv
+mem_256x128.sv
+MatMulEngine.sv
+LayerSequencer.sv
+weightMem_4096x32.sv
+actMem_2048x32.sv
+outMem_1024x128.sv
+Core.sv
+Accelerator.sv
+Top.sv
