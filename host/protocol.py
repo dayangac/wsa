@@ -1,9 +1,3 @@
-"""Byte encoding of the host protocol and the memory layout of the engine.
-
-See src/main/scala/wsa/CommandParser.scala for the commands and MatMulEngine.scala for the
-layout. Every memory entry holds n lanes; addresses and counts are in entries.
-"""
-
 from dataclasses import dataclass
 
 import numpy as np
@@ -25,14 +19,12 @@ def u16(v):
 
 
 def weight_entries(w, n):
-    """Tiles with nt outer and kt inner, n rows of n lanes each."""
     k, m = w.shape
     return np.array([w[kt * n + r, nt * n:(nt + 1) * n]
                      for nt in range(m // n) for kt in range(k // n) for r in range(n)])
 
 
 def act_entries(x, n):
-    """Row m of K-tile kt at kt * M + m."""
     rows, k = x.shape
     return np.array([x[row, kt * n:(kt + 1) * n] for kt in range(k // n) for row in range(rows)])
 
@@ -62,11 +54,6 @@ def write_layer(idx, p, m, k_tiles, n_tiles, shift, relu):
 
 
 def program(layers, x, n, act_split=1024):
-    """Bytes that load the padded layers, write input rows x, run and read the results.
-
-    Hidden activations ping-pong between activation addresses 0 and act_split. Returns the
-    bytes and the number of reply bytes to expect (0xD0, then 4 bytes per output lane).
-    """
     m = x.shape[0]
     out = bytearray()
     w_base = b_base = 0
@@ -91,7 +78,6 @@ def program(layers, x, n, act_split=1024):
 
 
 def decode_out(reply, m, n_tiles, n):
-    """Turns the read reply (after 0xD0) into an (m, n_tiles * n) int32 array."""
     words = np.frombuffer(reply, dtype=">i4").astype(np.int64)
     entries = words.reshape(n_tiles, m, n)
     return np.concatenate([entries[nt] for nt in range(n_tiles)], axis=1)

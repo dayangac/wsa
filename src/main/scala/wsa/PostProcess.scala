@@ -2,15 +2,6 @@ package wsa
 
 import chisel3._
 
-/** Turns accumulator values into a layer's outputs, one column per lane:
-  *
-  *   v = (acc + bias + 2^(shift - 1)) >> shift     (rounding arithmetic shift, no rounding if shift = 0)
-  *   v = max(v, 0)                                  if relu
-  *
-  * `out` is v wrapped to accWidth, for the final layer. `outClamped` is v saturated to int8, the
-  * input of the next layer. The sum is computed two bits wider than the accumulator so it
-  * cannot wrap before the shift.
-  */
 class PostProcess(n: Int, accWidth: Int = 32, dataWidth: Int = 8) extends Module {
   val io = IO(new Bundle {
     val in         = Input(Vec(n, SInt(accWidth.W)))
@@ -23,6 +14,7 @@ class PostProcess(n: Int, accWidth: Int = 32, dataWidth: Int = 8) extends Module
 
   val maxOut = ((1 << (dataWidth - 1)) - 1).S
   val minOut = (-(1 << (dataWidth - 1))).S
+  // rounding shift, sum is 2 bits wider so it can't wrap
   val half   = ((1.U << io.shift) >> 1).asUInt.zext
 
   for (i <- 0 until n) {

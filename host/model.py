@@ -1,10 +1,3 @@
-"""Integer model of what the hardware computes, bit for bit.
-
-A layer is out = post(x @ W + b) with int8 x and W, int32 b, and post being a rounding
-arithmetic right shift, an optional ReLU, then either an int8 clamp (hidden layers) or the
-int32 value (the last layer). Matrices are padded with zeros to multiples of the array size n.
-"""
-
 from dataclasses import dataclass
 
 import numpy as np
@@ -28,15 +21,12 @@ def pad_to(a, n, axis):
 
 
 def pad_layer(layer, n):
-    """Pads K and N to multiples of n. Padded outputs are 0 after the shift and ReLU, and the
-    next layer's padded weight rows are 0, so padding never changes the real outputs."""
     w = pad_to(pad_to(layer.w, n, 0), n, 1)
     b = pad_to(layer.b, n, 0)
     return Layer(w, b, layer.shift, layer.relu)
 
 
 def post(acc, b, shift, relu):
-    """Rounding shift and ReLU on exact integers (int64, no wrapping)."""
     half = (1 << shift) >> 1
     v = (acc + b.astype(np.int64) + half) >> shift
     if relu:
@@ -53,7 +43,6 @@ def clamp8(v):
 
 
 def forward(x, layers):
-    """Runs the network on int8 rows x (M, K0). Returns the last layer's int32 outputs."""
     a = x.astype(np.int64)
     for i, l in enumerate(layers):
         acc = a @ l.w.astype(np.int64)

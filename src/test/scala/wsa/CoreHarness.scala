@@ -4,7 +4,6 @@ import chisel3._
 import chisel3.simulator.PeekPokeAPI._
 import scala.util.Random
 
-/** Integer reference of a layer, on matrices already padded to multiples of n. */
 object Model {
   def layerValues(x: Seq[Seq[Int]], w: Seq[Seq[Int]], b: Seq[Int], shift: Int, relu: Boolean): Seq[Seq[BigInt]] =
     x.map { row =>
@@ -18,7 +17,6 @@ object Model {
     Seq.fill(rows, cols)(rng.between(lo, hi))
 }
 
-/** One layer to run on the core: matrices padded to multiples of n, and where they live. */
 case class Layer(
   x:       Seq[Seq[Int]],
   w:       Seq[Seq[Int]],
@@ -33,7 +31,6 @@ case class Layer(
   def m = x.length
 }
 
-/** Drives a Core through its ports using the memory layout of MatMulEngine. */
 class CoreDriver(dut: Core) {
   val n = dut.n
 
@@ -92,9 +89,6 @@ class CoreDriver(dut: Core) {
     dut.io.layerWrEn.poke(false.B)
   }
 
-  /** Pulses start for the first numLayers layers and waits for done. Returns the cycles from
-    * start to done.
-    */
   def run(numLayers: Int, timeout: Int = 200000): Int = {
     dut.io.numLayers.poke(numLayers.U)
     dut.io.start.poke(true.B)
@@ -129,7 +123,6 @@ class CoreDriver(dut: Core) {
       }
     }
 
-  /** Loads a layer, runs it and returns (results, cycles). */
   def runLayer(l: Layer): (Seq[Seq[BigInt]], Int) = {
     idle()
     writeWeights(l.wBase, l.w)
@@ -142,10 +135,6 @@ class CoreDriver(dut: Core) {
     (got, cycles)
   }
 
-  /** Loads a network whose layers chain through the activation memory (layer i reads what
-    * layer i - 1 wrote, only layer 0's x is used), runs it, and returns the last layer's
-    * results.
-    */
   def runNetwork(layers: Seq[Layer]): Seq[Seq[BigInt]] = {
     idle()
     for ((l, i) <- layers.zipWithIndex) {

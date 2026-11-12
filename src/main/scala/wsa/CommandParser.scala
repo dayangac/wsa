@@ -3,21 +3,7 @@ package wsa
 import chisel3._
 import chisel3.util._
 
-/** Host protocol over a byte stream. Multi-byte fields are big-endian; addresses and counts are
-  * in memory entries of n lanes.
-  *
-  *   0x01 addr:2 count:2 then count * n bytes       write weights
-  *   0x02 addr:2 count:2 then count * n * 4 bytes   write biases (int32)
-  *   0x03 addr:2 count:2 then count * n bytes       write activations
-  *   0x04 idx:1 wBase:2 bBase:2 inBase:2 outBase:2 m:2 kTiles:1 nTiles:1 shift:1 flags:1
-  *                                                  write layer idx (flags bit 0 relu, bit 1 toOut)
-  *   0x05 numLayers:1                               run, replies 0xD0 when done
-  *   0x06 addr:2 count:2                            read outputs, replies count * n * 4 bytes
-  *   0x07                                           ping, replies 0xA5
-  *
-  * Unknown command bytes are ignored. Incoming bytes wait in a small FIFO while the parser is
-  * busy, so the host can send the read command right after a run.
-  */
+// cmds (big endian): 1 weights, 2 bias, 3 acts, 4 layer, 5 run, 6 read out, 7 ping
 object Cmd {
   val WriteWeights = 0x01
   val WriteBias    = 0x02
@@ -69,8 +55,7 @@ class CommandParser(n: Int, maxLayers: Int = 16, dataWidth: Int = 8, accWidth: I
   def u16(i: Int) = Cat(hdr(i), hdr(i + 1))
   val entryBytes  = Mux(cmd === Cmd.WriteBias.U, (4 * n).U, n.U)
 
-  // The UART has no flow control, so bytes queue here while the parser is busy.
-  // A byte that arrives with the FIFO full is lost.
+  // no flow control on the uart, so bytes wait here while busy
   val rxIn = Wire(Decoupled(UInt(8.W)))
   rxIn.valid := io.rx.valid
   rxIn.bits  := io.rx.bits
@@ -80,7 +65,6 @@ class CommandParser(n: Int, maxLayers: Int = 16, dataWidth: Int = 8, accWidth: I
   val byte = fifo.bits
   val got  = fifo.fire
 
-  // Decoded entry from the payload buffer.
   val int8s  = VecInit((0 until n).map(i => buf(i).asSInt))
   val int32s = VecInit((0 until n).map(i => Cat(buf(4 * i), buf(4 * i + 1), buf(4 * i + 2), buf(4 * i + 3)).asSInt))
 
@@ -163,7 +147,7 @@ class CommandParser(n: Int, maxLayers: Int = 16, dataWidth: Int = 8, accWidth: I
         is(Cmd.Run.U) {
           io.start := true.B
           reply    := Cmd.RunDone.U
-          // Zero layers finish in the same cycle.
+          // 0 layers finishes right away
           state := Mux(io.done, State.Reply, State.RunWait)
         }
         is(Cmd.ReadOut.U) {
@@ -188,7 +172,7 @@ class CommandParser(n: Int, maxLayers: Int = 16, dataWidth: Int = 8, accWidth: I
       when(io.done) { state := State.Reply }
     }
     is(State.ReadAddr) {
-      // outRdAddr is addr; the output memory answers next cycle.
+      // mem answers next cycle
       state := State.ReadWait
     }
     is(State.ReadWait) {

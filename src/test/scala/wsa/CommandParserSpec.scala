@@ -5,7 +5,6 @@ import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.flatspec.AnyFlatSpec
 import scala.util.Random
 
-/** Byte encoding of the host protocol, the same layout as host/protocol.py. */
 object Protocol {
   def u16(v: Int): Seq[Int] = Seq((v >> 8) & 0xff, v & 0xff)
   def s8(v: Int): Int       = v & 0xff
@@ -22,7 +21,6 @@ object Protocol {
     Seq(Cmd.WriteLayer, idx) ++ u16(l.wBase) ++ u16(l.bBase) ++ u16(l.inBase) ++ u16(l.outBase) ++ u16(l.m) ++
       Seq(l.w.length / n, l.w.head.length / n, l.shift, (if (l.relu) 1 else 0) | (if (l.toOut) 2 else 0))
 
-  /** Memory entries of a layer, in MatMulEngine's layout. */
   def weightEntries(w: Seq[Seq[Int]], n: Int): Seq[Seq[Int]] =
     for (nt <- 0 until w.head.length / n; kt <- 0 until w.length / n; r <- 0 until n)
       yield (0 until n).map(c => w(kt * n + r)(nt * n + c))
@@ -30,7 +28,6 @@ object Protocol {
   def actEntries(x: Seq[Seq[Int]], n: Int): Seq[Seq[Int]] =
     for (kt <- 0 until x.head.length / n; row <- x.indices) yield x(row).slice(kt * n, (kt + 1) * n)
 
-  /** Every command needed to load and run a network, then read the last layer's results. */
   def program(layers: Seq[Layer], n: Int): Seq[Int] = {
     val load = layers.zipWithIndex.flatMap { case (l, i) =>
       writeWeights(l.wBase, weightEntries(l.w, n)) ++ writeBias(l.bBase, biasEntries(l.b, n)) ++ writeLayer(i, l, n)
@@ -40,7 +37,6 @@ object Protocol {
       readOut(last.outBase, last.m * last.w.head.length / n)
   }
 
-  /** Decodes a read reply into rows of int32 results, given the output layout. */
   def decodeOut(bytes: Seq[Int], m: Int, nTiles: Int, n: Int): Seq[Seq[BigInt]] = {
     val words = bytes.grouped(4).map(b => BigInt(b.foldLeft(0)((a, x) => (a << 8) | x))).toSeq
     val entries = words.grouped(n).toSeq
@@ -53,9 +49,6 @@ class CommandParserSpec extends AnyFlatSpec with ChiselSim {
 
   val n = 4
 
-  /** Sends bytes with `gap` idle cycles between them, then keeps running until `expect` reply
-    * bytes have come back. tx.ready is low on cycles where `stall` says so.
-    */
   def exchange(dut: Accelerator, bytes: Seq[Int], expect: Int, gap: Int = 0, stall: Int => Boolean = _ => false): Seq[Int] = {
     val got   = Seq.newBuilder[Int]
     var count = 0
@@ -149,7 +142,7 @@ class CommandParserSpec extends AnyFlatSpec with ChiselSim {
   }
 
   it should "send int32 results most significant byte first" in {
-    // One layer whose output is known: identity weights, bias -2, no shift.
+    // identity weights, bias -2, no shift
     val l = Layer(Seq(Seq(1, 2, 3, 4)), Seq.tabulate(n, n)((r, c) => if (r == c) 1 else 0), Seq.fill(n)(-2), 0,
       relu = false, toOut = true)
     simulate(new Accelerator(n)) { dut =>

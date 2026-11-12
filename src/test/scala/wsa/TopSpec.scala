@@ -4,19 +4,15 @@ import chisel3._
 import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.flatspec.AnyFlatSpec
 
-/** Talks to Top over its UART pins, the way a host would. */
 class TopSpec extends AnyFlatSpec with ChiselSim {
   behavior of "Top"
 
   val clocksPerBit = 4
 
-  /** Bit-level host: shifts bytes out on rxd and decodes whatever comes back on txd, one clock
-    * at a time so it can listen while it talks.
-    */
   class Host(dut: Top) {
     private val got     = Seq.newBuilder[Int]
     private var count   = 0
-    private var started = -1 // cycle of the current frame's start edge, -1 when idle
+    private var started = -1 // -1 when idle
     private var bits    = 0
     private var cycle   = 0
     private var lastTxd = true
@@ -28,7 +24,7 @@ class TopSpec extends AnyFlatSpec with ChiselSim {
       if (started < 0) {
         if (lastTxd && !txd) { started = cycle; bits = 0 }
       } else {
-        // Sample bit i in the middle of its bit time; bit 0 is the start bit.
+        // sample mid bit, bit 0 is the start bit
         val t = cycle - started
         if (t % clocksPerBit == clocksPerBit / 2) {
           val i = t / clocksPerBit

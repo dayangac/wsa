@@ -82,8 +82,7 @@ class CoreSpec extends AnyFlatSpec with ChiselSim {
     val tiles  = 3 * 3
     val rng    = new Random(21)
     val cycles = check(n, randomLayer(rng, n, m, 3, 3, toOut = true))
-    // Each tile costs M cycles of streaming plus a couple of cycles of handover; only the first
-    // load and the final drain are exposed.
+    // only the first load and the drain should show
     assert(cycles <= tiles * (m + 2) + n + 2 * n + 8, s"took $cycles cycles")
   }
 }

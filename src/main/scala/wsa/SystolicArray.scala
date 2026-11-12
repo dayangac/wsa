@@ -3,21 +3,6 @@ package wsa
 import chisel3._
 import chisel3.util._
 
-/** n x n weight-stationary systolic array computing y = x W.
-  *
-  * PE (r, c) holds W(r)(c), r being the input index and c the output index. Activations enter
-  * on the left, row r taking x(r), and move right. Partial sums start at zero on the top edge
-  * and move down, so the bottom of column c produces y(c) = sum over r of x(r) W(r)(c).
-  *
-  * The skew and deskew registers are inside the array: a whole input vector goes in on one
-  * cycle and the whole output vector comes out `latency` cycles later, one vector per cycle.
-  *
-  * Weights are double buffered. Holding `shift` high for n cycles loads the shadow weights,
-  * one row per cycle with row n - 1 first, while the array keeps computing with the active
-  * ones. Raising `swap` with an input vector makes that vector the first one to use the new
-  * weights. The swap reaches the last PE 2n - 2 cycles after the vector goes in, so the next
-  * load may start that many cycles after the swap and not earlier.
-  */
 class SystolicArray(val n: Int, dataWidth: Int = 8, accWidth: Int = 32) extends Module {
   val io = IO(new Bundle {
     val shift    = Input(Bool())
@@ -31,9 +16,7 @@ class SystolicArray(val n: Int, dataWidth: Int = 8, accWidth: Int = 32) extends 
 
   val swapDistance = 2 * n - 2
 
-  // Row r waits r cycles, so it meets the partial sum coming down from row r - 1.
-  // Column c's sum leaves the bottom n + c cycles after its vector went in, and the deskew
-  // delays it by n - 1 - c so all columns come out together.
+  // skew rows in, deskew columns out so the whole vector comes out together
   val latency = 2 * n - 1
 
   val pes = Seq.fill(n, n)(Module(new PE(dataWidth, accWidth)))

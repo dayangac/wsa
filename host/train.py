@@ -1,11 +1,4 @@
-"""Trains a 64-32-10 MLP on scikit-learn's 8x8 digits with numpy, quantizes it to int8 for the
-accelerator, and writes a test program for the end-to-end simulation.
-
-    python3 train.py [out_dir]
-
-Writes model.npz, program.bin (the bytes to send) and expected.txt (labels and the int32
-logits the hardware must return, one image per line) into out_dir.
-"""
+# usage: python3 train.py [out_dir], writes program.bin and expected.txt
 
 import sys
 from pathlib import Path
@@ -47,8 +40,6 @@ def train(x, y, epochs=300, lr=0.1, seed=0):
 
 
 def quantize(w1, b1, w2, b2, x_train):
-    """Symmetric int8 weights. The hidden layer's shift is picked so the largest training
-    activation lands near 127; the logits stay int32."""
     s_x = 1 / (16 * INPUT_SCALE)
     s_w1 = np.abs(w1).max() / 127
     s_w2 = np.abs(w2).max() / 127

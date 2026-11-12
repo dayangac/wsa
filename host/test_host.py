@@ -7,7 +7,6 @@ import protocol
 
 
 def naive_layer(x, w, b, shift, relu):
-    """Element by element, with Python ints, independent of model.post."""
     out = []
     for row in x:
         vals = []
@@ -79,7 +78,7 @@ class LayoutTest(unittest.TestCase):
         w = np.arange(4 * 6).reshape(4, 6)  # 2 K-tiles, 3 N-tiles
         e = protocol.weight_entries(w, n)
         self.assertEqual(e.shape, (12, 2))
-        # tile (kt=1, nt=2) is entry block nt * kTiles + kt = 5; its row 1 is W[3, 4:6]
+        # tile (kt=1, nt=2) is block 5, its row 1 is W[3, 4:6]
         self.assertEqual(e[5 * n + 1].tolist(), w[3, 4:6].tolist())
 
     def test_act_rows_are_kt_major(self):

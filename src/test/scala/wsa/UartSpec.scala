@@ -5,9 +5,7 @@ import chisel3.simulator.scalatest.ChiselSim
 import org.scalatest.flatspec.AnyFlatSpec
 import scala.util.Random
 
-/** Bit-level line models shared by the UART and top-level tests. */
 object UartLine {
-  /** The 10 line levels of one 8N1 frame. */
   def frame(byte: Int): Seq[Boolean] = false +: (0 until 8).map(i => ((byte >> i) & 1) == 1) :+ true
 }
 
@@ -28,7 +26,6 @@ class UartSpec extends AnyFlatSpec with ChiselSim {
 
   behavior of "UartRx"
 
-  /** Drives frames onto rxd, each bit lasting `bitTime` cycles, and collects what comes out. */
   def receive(dut: UartRx, bits: Seq[Boolean], bitTime: Int): Seq[Int] = {
     val got = Seq.newBuilder[Int]
     for (b <- bits ++ Seq.fill(4)(true); _ <- 0 until bitTime) {

@@ -14,16 +14,10 @@ class SystolicArraySpec extends AnyFlatSpec with ChiselSim {
   def randMatrix(rng: Random, n: Int) = Seq.fill(n, n)(rng.between(-128, 128))
   def randVec(rng: Random, n: Int)    = Seq.fill(n)(rng.between(-128, 128))
 
-  /** What to drive on one cycle: a weight row to shift in, and an input vector (with swap). */
   case class Cycle(weightRow: Option[Seq[Int]] = None, act: Option[Seq[Int]] = None, swap: Boolean = false)
 
-  /** One weight tile and the inputs that use it. A None input is a cycle with inValid low. */
   case class Tile(w: Seq[Seq[Int]], inputs: Seq[Option[Seq[Int]]])
 
-  /** Lays the tiles out cycle by cycle the way a controller would: each tile's load starts
-    * `loadGap` cycles after the previous tile's swap, and its stream starts once both the load
-    * and the previous stream are done.
-    */
   def schedule(n: Int, tiles: Seq[Tile], loadGap: Int): Seq[Cycle] = {
     val cycles     = scala.collection.mutable.Map[Int, Cycle]().withDefaultValue(Cycle())
     var loadStart  = 0

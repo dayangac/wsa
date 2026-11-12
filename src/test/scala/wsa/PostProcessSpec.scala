@@ -21,7 +21,6 @@ class PostProcessSpec extends AnyFlatSpec with ChiselSim {
 
   val n = 4
 
-  /** Drives one set of lanes and checks both outputs against the model. */
   def check(dut: PostProcess, acc: Seq[BigInt], bias: Seq[BigInt], shift: Int, relu: Boolean): Unit = {
     for (i <- 0 until n) {
       dut.io.in(i).poke(acc(i).S)

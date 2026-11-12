@@ -3,37 +3,20 @@ package wsa
 import chisel3._
 import chisel3.util._
 
-/** One layer: out = post(act x W + bias), with act M x K and W K x N, K and N multiples of n. */
 class LayerConfig extends Bundle {
-  val wBase   = UInt(16.W) // first weight tile
-  val bBase   = UInt(16.W) // bias entry of output tile 0
-  val inBase  = UInt(16.W) // input activations, in the activation memory
-  val outBase = UInt(16.W) // results, in the activation memory or the output memory
-  val m       = UInt(16.W) // rows (inputs in the batch)
-  val kTiles  = UInt(8.W)  // K / n
-  val nTiles  = UInt(8.W)  // N / n
+  val wBase   = UInt(16.W)
+  val bBase   = UInt(16.W)
+  val inBase  = UInt(16.W)
+  val outBase = UInt(16.W)
+  val m       = UInt(16.W) // batch size
+  val kTiles  = UInt(8.W)
+  val nTiles  = UInt(8.W)
   val shift   = UInt(5.W)
   val relu    = Bool()
-  val toOut   = Bool() // write int32 results to the output memory instead of int8 to activations
+  val toOut   = Bool() // int32 to out mem instead of int8 acts
 }
 
-/** Runs one layer on a weight-stationary array.
-  *
-  * Memory layout, every entry being n lanes:
-  *   - weights: tile (kt, nt) is n entries at wBase + (nt * kTiles + kt) * n, entry r holding
-  *     W(kt * n + r)(nt * n until (nt + 1) * n)
-  *   - input: row m of K-tile kt at inBase + kt * M + m
-  *   - bias: output tile nt at bBase + nt
-  *   - result: row m of output tile nt at outBase + nt * M + m, which is also the input layout of
-  *     the next layer
-  *
-  * Tiles run with nt outer and kt inner. The loader fills the shadow weights of the next tile
-  * as soon as the swap of the current one has reached the last PE, so loads hide behind
-  * streams. Partial sums for the first K - 1 tiles go to the accumulator memory; the last K tile
-  * adds the accumulator, runs post processing and writes the result.
-  *
-  * All memories are synchronous: data comes back the cycle after the address.
-  */
+//btw small batches are load bound (~3n cycles a tile), wider weight loads would fix that
 class MatMulEngine(n: Int, maxRows: Int, dataWidth: Int = 8, accWidth: Int = 32) extends Module {
   val io = IO(new Bundle {
     val start = Input(Bool())
@@ -64,7 +47,7 @@ class MatMulEngine(n: Int, maxRows: Int, dataWidth: Int = 8, accWidth: Int = 32)
   val running    = RegInit(false.B)
   val totalTiles = cfg.kTiles * cfg.nTiles
 
-  // Loader state
+  // loader
   val loading    = RegInit(false.B)
   val loadRow    = Reg(UInt(log2Ceil(n + 1).W))
   val loaded     = Reg(UInt(16.W))
@@ -73,7 +56,7 @@ class MatMulEngine(n: Int, maxRows: Int, dataWidth: Int = 8, accWidth: Int = 32)
   val sinceSwap  = Reg(UInt(log2Ceil(2 * n + 1).W))
   val swapSafe   = sinceSwap >= array.swapDistance.U
 
-  // Streamer state
+  // streamer
   val streaming   = RegInit(false.B)
   val row         = Reg(UInt(16.W))
   val streamed    = Reg(UInt(16.W))
@@ -101,7 +84,6 @@ class MatMulEngine(n: Int, maxRows: Int, dataWidth: Int = 8, accWidth: Int = 32)
     nt          := 0.U
     shadowFull  := false.B
     sinceSwap   := array.swapDistance.U
-    // An empty layer has nothing to do.
     when(io.cfg.m === 0.U || io.cfg.kTiles === 0.U || io.cfg.nTiles === 0.U) {
       io.done := true.B
     }.otherwise {
@@ -111,7 +93,7 @@ class MatMulEngine(n: Int, maxRows: Int, dataWidth: Int = 8, accWidth: Int = 32)
 
   when(sinceSwap < array.swapDistance.U) { sinceSwap := sinceSwap + 1.U }
 
-  // Loader: one weight row per cycle, last row first.
+  // one weight row a cycle, last row first
   val loadIssue = WireDefault(false.B)
   when(running && !loading && !shadowFull && swapSafe && loaded < totalTiles) {
     loading := true.B
@@ -132,7 +114,7 @@ class MatMulEngine(n: Int, maxRows: Int, dataWidth: Int = 8, accWidth: Int = 32)
   array.io.shift    := RegNext(loadIssue, false.B)
   array.io.weightIn := io.wData
 
-  // Streamer: one input row per cycle; the first row of a tile carries the swap.
+  // first row of a tile carries the swap
   class Tag extends Bundle {
     val row   = UInt(16.W)
     val first = Bool()
@@ -178,13 +160,13 @@ class MatMulEngine(n: Int, maxRows: Int, dataWidth: Int = 8, accWidth: Int = 32)
     }
   }
 
-  // The activation memory answers a cycle later; the tag follows the data through the array.
+  // act mem answers a cycle later, the tag rides along
   array.io.inValid := RegNext(issueValid, false.B)
   array.io.swap    := RegNext(issueSwap, false.B)
   array.io.actIn   := io.aData
   val tagIn = RegNext(issueTag)
 
-  // One cycle before a result leaves the array, read its accumulator and bias entries.
+  // read acc and bias a cycle before the result comes out
   val readValid = ShiftRegister(array.io.inValid, array.latency - 1, false.B, true.B)
   val readTag   = ShiftRegister(tagIn, array.latency - 1)
   val accOld    = accMem.read(readTag.row, readValid && !readTag.first)
@@ -207,7 +189,6 @@ class MatMulEngine(n: Int, maxRows: Int, dataWidth: Int = 8, accWidth: Int = 32)
   io.outWrAddr := outTag.dst
   io.outWrData := post.io.out
 
-  // Done once every tile is streamed and the last result has left the pipeline.
   when(running && !draining && !streaming && streamed === totalTiles) {
     draining := true.B
     drain    := (array.latency + 2).U

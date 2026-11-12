@@ -3,7 +3,6 @@ package wsa
 import chisel3._
 import chisel3.util._
 
-/** The accelerator behind a byte stream: the command parser driving the core. */
 class Accelerator(n: Int = 4) extends Module {
   val io = IO(new Bundle {
     val rx = Flipped(Valid(UInt(8.W)))

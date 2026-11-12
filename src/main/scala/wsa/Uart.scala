@@ -3,9 +3,6 @@ package wsa
 import chisel3._
 import chisel3.util._
 
-/** 8N1 UART receiver. `out` pulses valid for one cycle per received byte; there is no flow
-  * control, so the consumer has to keep up (one byte per 10 bit times).
-  */
 class UartRx(clocksPerBit: Int) extends Module {
   require(clocksPerBit >= 2)
   val io = IO(new Bundle {
@@ -13,7 +10,7 @@ class UartRx(clocksPerBit: Int) extends Module {
     val out = Valid(UInt(8.W))
   })
 
-  // Two flops against metastability; the line idles high.
+  // sync, line idles high
   val rx = RegNext(RegNext(io.rxd, true.B), true.B)
 
   object State extends ChiselEnum { val Idle, Start, Data, Stop = Value }
@@ -33,7 +30,7 @@ class UartRx(clocksPerBit: Int) extends Module {
       }
     }
     is(State.Start) {
-      // Check the start bit again in its middle, to ignore glitches.
+      // check the start bit again mid bit
       when(timer === 0.U) {
         when(!rx) {
           state := State.Data
@@ -52,7 +49,7 @@ class UartRx(clocksPerBit: Int) extends Module {
     }
     is(State.Stop) {
       when(timer === 0.U) {
-        // A byte without its stop bit is a framing error and is dropped.
+        // no stop bit, drop it
         io.out.valid := rx
         state        := State.Idle
       }.otherwise { timer := timer - 1.U }
@@ -60,7 +57,6 @@ class UartRx(clocksPerBit: Int) extends Module {
   }
 }
 
-/** 8N1 UART transmitter. Takes a byte when `in.ready` and sends it LSB first. */
 class UartTx(clocksPerBit: Int) extends Module {
   require(clocksPerBit >= 1)
   val io = IO(new Bundle {
@@ -68,7 +64,7 @@ class UartTx(clocksPerBit: Int) extends Module {
     val in  = Flipped(Decoupled(UInt(8.W)))
   })
 
-  // Start bit, 8 data bits, stop bit, sent from bit 0 up.
+  // start, 8 data, stop
   val frame = RegInit(0x3ff.U(10.W))
   val left  = RegInit(0.U(4.W))
   val timer = Reg(UInt(log2Ceil(clocksPerBit).max(1).W))

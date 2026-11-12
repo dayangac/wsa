@@ -8,9 +8,6 @@ import scala.util.Random
 class LayerSequencerSpec extends AnyFlatSpec with ChiselSim {
   behavior of "Core running a network"
 
-  /** A random MLP with the given widths. Layers ping-pong between activation regions 0 and
-    * 512; the last one writes int32 results to the output memory.
-    */
   def network(rng: Random, m: Int, widths: Seq[Int], shift: Int = 8): Seq[Layer] = {
     val x     = Model.rand(rng, m, widths.head)
     var wBase = 0
@@ -18,7 +15,7 @@ class LayerSequencerSpec extends AnyFlatSpec with ChiselSim {
     widths.sliding(2).zipWithIndex.map { case (Seq(k, nOut), i) =>
       val last = i == widths.length - 2
       val l = Layer(
-        x = if (i == 0) x else Seq.fill(m)(Seq.empty), // only the row count matters after layer 0
+        x = if (i == 0) x else Seq.fill(m)(Seq.empty), // only m matters after layer 0
         w = Model.rand(rng, k, nOut),
         b = Seq.fill(nOut)(rng.between(-4096, 4096)),
         shift = shift,
@@ -44,7 +41,7 @@ class LayerSequencerSpec extends AnyFlatSpec with ChiselSim {
   }
 
   it should "produce a mix of clamped and unclamped values between layers" in {
-    // Guards the test above against a network whose hidden values are all 0 or all saturated.
+    // make sure the hidden values aren't all 0 or all clamped
     val layers = network(new Random(1), m = 9, widths = Seq(16, 12, 8, 4))
     val hidden = Model.layerValues(layers.head.x, layers.head.w, layers.head.b, layers.head.shift, relu = true).flatten
     assert(hidden.count(v => v > 0 && v < 127) > hidden.length / 4)
@@ -75,7 +72,7 @@ class LayerSequencerSpec extends AnyFlatSpec with ChiselSim {
     val layers = network(rng, m = 3, widths = Seq(8, 4))
     simulate(new Core(n = 4)) { dut =>
       val d = new CoreDriver(dut)
-      // A second entry that would overwrite the output memory with zeros if it ran.
+      // would zero the outputs if it ran
       d.idle()
       d.writeLayer(1, layers.head.copy(w = Seq.fill(8, 4)(0), b = Seq.fill(4)(0), wBase = 2000, bBase = 100))
       assert(d.runNetwork(layers) == d.expectedNetwork(layers))
@@ -95,9 +92,6 @@ class LayerSequencerSpec extends AnyFlatSpec with ChiselSim {
 class LayerSequencerUnitSpec extends AnyFlatSpec with ChiselSim {
   behavior of "LayerSequencer"
 
-  /** Starts a run and answers every engine start with done a few cycles later. Returns how many
-    * layers were started before the sequencer reported done.
-    */
   def countLayers(dut: LayerSequencer, numLayers: Int): Int = {
     dut.io.tableWrEn.poke(false.B)
     dut.io.engDone.poke(false.B)

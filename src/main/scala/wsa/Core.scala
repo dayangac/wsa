@@ -2,12 +2,6 @@ package wsa
 
 import chisel3._
 
-/** The accelerator without its host link: the memories, the engine and the layer sequencer,
-  * with ports to fill the memories and the layer table, run the network and read results back.
-  *
-  * Host reads of the activation and output memories are synchronous and only valid while the
-  * engine is not busy, since the engine uses the same read ports.
-  */
 class Core(
   val n:           Int = 4,
   val weightDepth: Int = 4096,
