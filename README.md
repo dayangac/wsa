@@ -1,112 +1,106 @@
-Chisel Project Template
-=======================
+# wsa
 
-You've done the [Chisel Bootcamp](https://github.com/freechipsproject/chisel-bootcamp), and now you
-are ready to start your own Chisel project.  The following procedure should get you started
-with a clean running [Chisel3](https://www.chisel-lang.org/) project.
+A small neural network accelerator in Chisel, built around a weight-stationary systolic array.
+A host sends a quantized MLP and a batch of inputs over a UART, the accelerator runs every
+layer, and the host reads the results back. The test suite runs a digits classifier end to end
+in simulation.
 
-## Make your own Chisel3 project
+## Architecture
 
-### Dependencies
+### Processing element
 
-#### JDK 11 or newer
+Each PE holds one int8 weight. Every cycle it multiplies the activation coming from the left
+by that weight, adds the partial sum coming from above, and passes the result down. The
+activation moves on to the PE on the right.
 
-We recommend using Java 11 or later LTS releases. While Chisel itself works with Java 8, our preferred build tool Mill requires Java 11. You can install the JDK as your operating system recommends, or use the prebuilt binaries from [Adoptium](https://adoptium.net/) (formerly AdoptOpenJDK).
+The weight is double buffered. A second "shadow" register is loaded while the PE keeps
+computing with the active one. A swap flag travels along with the activations: the activation
+that carries it is the first one to use the new weight.
 
-#### SBT or mill
+### Systolic array
 
-SBT is the most common build tool in the Scala community. You can download it [here](https://www.scala-sbt.org/download.html).
-Mill is another Scala/Java build tool preferred by Chisel's developers.
-This repository includes a bootstrap script `./mill` so that no installation is necessary.
-You can read more about Mill on its website: https://mill-build.org.
+n x n PEs compute y = x W for one input vector per cycle. PE (r, c) holds W[r][c]. Input row r
+is delayed by r cycles so it meets the partial sums coming down, and the outputs are delayed
+again so the whole result vector comes out together, 2n - 1 cycles after its input went in.
 
-#### Verilator
+Weights are loaded down each column as a shift chain, one row per cycle, into the shadow
+registers. The next tile can start loading 2n - 2 cycles after the previous swap entered the
+array, so loads hide behind streaming.
 
-The test with `svsim` needs Verilator installed.
-See Verilator installation instructions [here](https://verilator.org/guide/latest/install.html).
+### Engine
 
-### How to get started
+The engine runs one layer, out = post(act x W + bias), with act M x K and W K x N, by splitting
+it into n x n tiles. Output tiles run in the outer loop and K tiles in the inner loop. For each
+tile the engine:
 
-#### Create a repository from the template
+1. loads the tile's weights into the shadow registers while the previous tile streams
+2. streams all M input rows through the array, with the swap on the first row
+3. adds each result row to an accumulator memory, or for the last K tile, adds the bias,
+   applies a rounding right shift and an optional ReLU, and writes the result
 
-This repository is a Github template. You can create your own repository from it by clicking the green `Use this template` in the top right.
-Please leave `Include all branches` **unchecked**; checking it will pollute the history of your new repository.
-For more information, see ["Creating a repository from a template"](https://docs.github.com/en/free-pro-team@latest/github/creating-cloning-and-archiving-repositories/creating-a-repository-from-a-template).
+A hidden layer's results are clamped to int8 and written back into the activation memory, in
+the same layout the next layer reads. The last layer writes int32 results to an output memory.
 
-#### Wait for the template cleanup workflow to complete
+M is the batch size, so a whole batch of inputs shares each weight tile. That reuse is what a
+weight-stationary array is good at.
 
-After using the template to create your own blank project, please wait a minute or two for the `Template cleanup` workflow to run which will removes some template-specific stuff from the repository (like the LICENSE).
-Refresh the repository page in your browser until you see a 2nd commit by `actions-user` titled `Template cleanup`.
+### Layer sequencer
 
+A table holds up to 16 layer configurations (memory bases, M, tile counts, shift, ReLU, output
+target). One start command runs the layers in order, ping-ponging between two regions of the
+activation memory.
 
-#### Clone your repository
+### Host link
 
-Once you have created a repository from this template and the `Template cleanup` workflow has completed, you can click the green button to get a link for cloning your repository.
-Note that it is easiest to push to a repository if you set up SSH with Github, please see the [related documentation](https://docs.github.com/en/free-pro-team@latest/github/authenticating-to-github/connecting-to-github-with-ssh). SSH is required for pushing to a Github repository when using two-factor authentication.
+A UART receiver and transmitter (8N1) connect to a command parser. Incoming bytes wait in a
+small FIFO while the parser is busy. Commands:
 
-```sh
-git clone git@github.com:dayangac/wsa.git
-cd wsa
-```
+    0x01 addr count data   write weights
+    0x02 addr count data   write biases (int32, big-endian)
+    0x03 addr count data   write activations
+    0x04 idx config        write a layer configuration
+    0x05 layers            run, replies 0xD0 when done
+    0x06 addr count        read results
+    0x07                   ping, replies 0xA5
 
-#### Set project organization and name in build.sbt
+## Layout
 
-The cleanup workflow will have attempted to provide sensible defaults for `ThisBuild / organization` and `name` in the `build.sbt`.
-Feel free to use your text editor of choice to change them as you see fit.
+    src/main/scala/wsa/   hardware: PE, SystolicArray, PostProcess, MatMulEngine,
+                          LayerSequencer, Core, Uart, CommandParser, Accelerator, Top
+    src/test/scala/wsa/   ChiselSim tests for every module, and an end to end test over UART
+    host/                 python: bit-exact model of the hardware, protocol encoder,
+                          numpy trainer for the digits MLP
+    scripts/synth.sh      Verilog generation and yosys resource counts
 
-#### Clean up the README.md file
+## Running
 
-Again, use you editor of choice to make the README specific to your project.
+Tests (needs Verilator):
 
-#### Add a LICENSE file
+    sbt test
 
-It is important to have a LICENSE for open source (or closed source) code.
-This template repository has the Unlicense in order to allow users to add any license they want to derivative code.
-The Unlicense is stripped when creating a repository from this template so that users do not accidentally unlicense their own work.
+On an Apple Silicon Mac, sbt and the perl that Verilator starts both have to be arm64:
 
-For more information about a license, check out the [Github Docs](https://docs.github.com/en/free-pro-team@latest/github/building-a-strong-community/adding-a-license-to-a-repository).
+    export JAVA_HOME=$(/usr/libexec/java_home -a arm64 -v 21)
+    PATH="/usr/bin:$PATH" sbt test
 
-#### Commit your changes
-```sh
-git commit -m 'Starting wsa'
-git push origin main
-```
+Host side (needs numpy and scikit-learn):
 
-### Did it work?
+    cd host
+    python3 -m unittest test_host
+    python3 train.py        # retrains and rewrites the test program in src/test/resources/digits
 
-You should now have a working Chisel3 project.
+Verilog and resource counts (needs yosys):
 
-You can run the included test with:
-```sh
-sbt test
-```
+    scripts/synth.sh
 
-Alternatively, if you use Mill:
-```sh
-./mill wsa.test
-```
+## Results
 
-You should see a whole bunch of output that ends with something like the following lines
-```
-[info] Tests: succeeded 1, failed 0, canceled 0, ignored 0, pending 0
-[info] All tests passed.
-[success] Total time: 5 s, completed Dec 16, 2020 12:18:44 PM
-```
-If you see the above then...
+- The digits MLP (64-32-10, int8) gets 96.7% on the 450 held-out scikit-learn digits, the same
+  as the float model it was quantized from.
+- In simulation, 32 test images go through the whole path (UART, parser, two layers on a 4 x 4
+  array, UART back). The logits match the python model exactly and all 32 are classified
+  right.
+- With n = 4, yosys maps the design to about 5200 LUTs, 3700 flip-flops, 28 block RAMs and 17
+  multipliers on ECP5. It does not fit an iCE40 UP5K with the default memory sizes.
 
-### It worked!
-
-You are ready to go. We have a few recommended practices and things to do.
-
-* Use packages and following conventions for [structure](https://www.scala-sbt.org/1.x/docs/Directories.html) and [naming](http://docs.scala-lang.org/style/naming-conventions.html)
-* Package names should be clearly reflected in the testing hierarchy
-* Build tests for all your work
-* Read more about testing in SBT in the [SBT docs](https://www.scala-sbt.org/1.x/docs/Testing.html)
-* This template includes a [test dependency](https://www.scala-sbt.org/1.x/docs/Library-Dependencies.html#Per-configuration+dependencies) on [ScalaTest](https://www.scalatest.org/). This, coupled with `svsim` (included with Chisel) and `verilator`, are a starting point for testing Chisel generators.
-  * You can remove this dependency in the build.sbt file if you want to
-* Change the name of your project in the build.sbt file
-* Change your README.md
-
-## Problems? Questions?
-
-Check out the [Chisel Users Community](https://www.chisel-lang.org/community.html) page for links to get in contact!
+It has only been run in simulation, not on an FPGA.
